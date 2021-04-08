@@ -1,5 +1,5 @@
 name = Zarinpal
-description = A module for checkout using Zarinpal Gateway (www.tolooco.com)
+description = A module for checkout using Zarinpal Gateway 
 
 dependencies[] = uc_order
 dependencies[] = uc_payment

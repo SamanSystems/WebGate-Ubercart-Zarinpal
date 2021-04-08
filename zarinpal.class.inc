@@ -89,16 +89,6 @@ class Zarinpal {
    */
   function __construct($MerchantID, $Amount, $Description, $CallbackURL, $Email= '', $Mobile = '') {
     //Check if we should use SoapClient or Nusoap
-    $soapmode = variable_get('uc_zarinpal_soapmode', 'nusoap');
-    if ($soapmode == 'soapclient' && class_exists('SoapClient')) {
-      $this->nusoap = FALSE;
-    }
-    else {
-      //Load the nusoap class.
-      require_once dirname(__FILE__) . '/lib/nusoap/nusoap.php';
-      $this->nusoap = TRUE;
-    }
-
     //Initialize variables
     $this->MerchantID = $MerchantID;
     $this->Amount = $Amount;
@@ -139,45 +129,38 @@ class Zarinpal {
    * @return String Authority number
    */
   public function paymentRequest() {
-    $wsdl = $this->isIran() ? $this->webgate_auth_ir : $this->webgate_auth_de;
-    $authority = NULL;
-    $args = array(
-      'MerchantID' 	=> $this->MerchantID,
-      'Amount' 		  => $this->Amount,
-      'Description' => $this->Description,
-      'Email' 		  => $this->Email,
-      'Mobile' 		  => $this->Mobile,
-      'CallbackURL' => $this->CallbackURL
-    );
 
-    if ($this->nusoap) {
-      $client = new nusoap_client($wsdl, 'wsdl');
-      $client->soap_defencoding = 'UTF-8';
-      $result = $client->call('PaymentRequest', array($args));
+      $param_request = array(
+          'merchant_id' => $this->MerchantID,
+          'amount' => $this->Amount * 10,
+          'description' => $this->Description,
+          'callback_url' => $this->CallbackURL
+      );
+      $jsonData = json_encode($param_request);
 
-      if (($result['Status'] == 100) && (isset($result['Authority'])) && (strlen($result['Authority']) == 36)) {
-        $authority = $result['Authority'];
+      $ch = curl_init('https://api.zarinpal.com/pg/v4/payment/request.json');
+      curl_setopt($ch, CURLOPT_USERAGENT, 'ZarinPal Rest Api v4');
+      curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'POST');
+      curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonData);
+      curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+      curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+          'Content-Type: application/json',
+          'Content-Length: ' . strlen($jsonData)
+      ));
+
+      $result = curl_exec($ch);
+      $err = curl_error($ch);
+      $result = json_decode($result, true, JSON_PRETTY_PRINT);
+      curl_close($ch);
+
+      if (($result['data']['code'] == 100) && (isset($result['data']['authority']))) {
+        $authority = $result['data']['authority'];
       }
       else {
         throw new ZarinpalException(t('Can not request payment. !msg', array(
-          '!msg' => $this->translateErrorCode($result['Status']),
+          '!msg' => $this->translateErrorCode($result['data']['code']),
         )));
       }
-    }
-    else {
-      $client = new SoapClient($wsdl, array('encoding' => 'UTF-8'));
-
-      $result = $client->PaymentRequest($args);
-
-      if (($result->Status == 100) && (isset($result->Authority)) && (strlen($result->Authority) == 36)) {
-        $authority = $result->Authority;
-      }
-      else {
-        throw new ZarinpalException(t('Can not request payment. !msg', array(
-          '!msg' => $this->translateErrorCode($result->Status),
-        )));
-      }
-    }
 
     return $authority;
   }
@@ -217,44 +200,35 @@ class Zarinpal {
     }
 
     // Validated. Now Process verification
-    $wsdl = $this->isIran() ? $this->webgate_auth_ir : $this->webgate_auth_de;
-    $refid = NULL;
-    $args = array(
-      'MerchantID' => $this->MerchantID,
-      'Amount' 		 => $this->Amount,
-      'Authority'  => $Authority,
-    );
+      $refid = NULL;
+      $param_verify = array("merchant_id" => $this->MerchantID, "authority" => $Authority, "amount" => $this->Amount * 10);
+      $jsonData = json_encode($param_verify);
+      $ch = curl_init('https://api.zarinpal.com/pg/v4/payment/verify.json');
+      curl_setopt($ch, CURLOPT_USERAGENT, 'ZarinPal Rest Api v4');
+      curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'POST');
+      curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonData);
+      curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+      curl_setopt($ch, CURLOPT_HTTPHEADER, array(
+          'Content-Type: application/json',
+          'Content-Length: ' . strlen($jsonData)
+      ));
 
-    if ($this->nusoap) {
-      $client = new nusoap_client($wsdl, 'wsdl');
-      $client->soap_defencoding = 'UTF-8';
-      $res = $client->call('PaymentVerification', array($args));
+      $result = curl_exec($ch);
+      $err = curl_error($ch);
+      curl_close($ch);
+      $result = json_decode($result, true);
 
-      if (isset($res['Status']) && ($res['Status'] == 100)) {
-        $refid = $res['RefID'];
+
+
+      if ($result['data']['code'] == 100) {
+        $refid = $result['data']['ref_id'];
       }
       else {
         throw new ZarinpalExceptionVerification(t('Transaction verification failed. RefID: %refid, Message: !message', array(
-          '%refid'   => $res['RefID'],
-          '!message' => $this->translateErrorCode($res['Status']),
+          '%refid'   => '',
+          '!message' => $this->translateErrorCode($result['data']['code']),
         )));
       }
-
-    }
-    else {
-      $client = new SoapClient($wsdl, array('encoding' => 'UTF-8'));
-      $res = $client->PaymentVerification($args);
-
-      if (isset($res->Status) && ($res->Status == 100)) {
-        $refid = $res->RefID;
-      }
-      else {
-        throw new ZarinpalExceptionVerification(t('Transaction verification failed. RefID: %refid, Message: !message', array(
-          '%refid'   => $res->RefID,
-          '!message' => $this->translateErrorCode($res->Status),
-        )));
-      }
-    }
 
     return $refid;
   }
@@ -293,47 +267,20 @@ class Zarinpal {
    */
   public function translateErrorCode($code) {
     switch ($code) {
-      case -1:
+      case -9:
         $msg = t('Incomplete data.');
         break;
-      case -2:
+      case -10:
         $msg = t('Invalid IP or MerchantID.');
         break;
-      case -3:
-        $msg = t('Cannot pay this amount due to restrictions of the Shapark system.');
-        break;
-      case -4:
+      case -16:
         $msg = t('Merchant\'s verify-level is below the accepted silver level.');
         break;
-      case -11:
-        $msg = t('Specified request was not found.');
-        break;
-      case -12:
-        $msg = t('Can\'t edit request.');
-        break;
-      case -21:
-        $msg = t('No financial actions found for this transaction.');
-        break;
-      case -22:
+      case -51:
         $msg = t('Transaction failed.');
         break;
-      case -33:
+      case -50:
         $msg = t('Transaction\'s amount does not match with the paid amount.');
-        break;
-      case -34:
-        $msg = t('Maximum transaction division exceeded (by quantity or amount).');
-        break;
-      case -40:
-        $msg = t('Access to requested method is denied.');
-        break;
-      case -41:
-        $msg = t('Invalid data sent to AdditionalData() method.');
-        break;
-      case -42:
-        $msg = t('Paymeny authority lifetime should be between 30 minutes and 45 days.');
-        break;
-      case -54:
-        $msg = t('The specified request is archived.');
         break;
       case 100:
         $msg = t('Action completed successfully');
